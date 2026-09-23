@@ -27,56 +27,7 @@ sleep 30
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph "API Layer"
-        REST["REST API<br/>8081"]
-    end
-    
-    subgraph "Database & Events"
-        PG["PostgreSQL<br/>Invoices + Outbox"]
-        REDIS["Redis<br/>Locks + Idempotency"]
-    end
-    
-    subgraph "Event Streaming"
-        KAFKA["Kafka<br/>Event Bus"]
-        TOPIC1["billing.invoice_due"]
-        TOPIC2["notifications.retry.*"]
-        TOPIC3["notifications.dlq"]
-    end
-    
-    subgraph "Services"
-        INVOICE["Invoice Service<br/>8081<br/>Outbox Relay"]
-        SCHEDULER["Scheduler Worker<br/>8082<br/>Daily at 02:00"]
-        NOTIFIER["Notification Worker<br/>8083<br/>SMS/Email/Call"]
-    end
-    
-    subgraph "Observability"
-        PROM["Prometheus<br/>Metrics"]
-        GRAF["Grafana<br/>Dashboards"]
-    end
-    
-    REST -->|GET /api/invoices/due| INVOICE
-    INVOICE -->|read/write| PG
-    INVOICE -->|publish pending| KAFKA
-    
-    SCHEDULER -->|ShedLock| REDIS
-    SCHEDULER -->|query due invoices| INVOICE
-    SCHEDULER -->|produce| KAFKA
-    KAFKA --> TOPIC1
-    TOPIC1 -->|consume| NOTIFIER
-    
-    NOTIFIER -->|idempotency check| REDIS
-    NOTIFIER -->|persist delivery| PG
-    NOTIFIER -->|retry| TOPIC2
-    TOPIC2 -->|retry consume| NOTIFIER
-    TOPIC3 -->|DLQ handler| NOTIFIER
-    
-    INVOICE -->|export metrics| PROM
-    SCHEDULER -->|export metrics| PROM
-    NOTIFIER -->|export metrics| PROM
-    PROM -->|scrape| GRAF
-```
+![architecture.png](architecture.png)
 
 ## Services
 
