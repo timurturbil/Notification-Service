@@ -72,7 +72,7 @@ public class InvoiceDueEventListener {
                 log.error(errorMsg);
                 deliveryService.recordFailure(event.invoiceId(), event.channel(), errorMsg);
                 metricsService.recordNotificationFailed(event.channel());
-                throw new IllegalArgumentException(errorMsg);
+                return;
             }
 
             // Get appropriate sender for channel
@@ -88,15 +88,14 @@ public class InvoiceDueEventListener {
 
             log.info("Successfully sent {} notification for invoice: {}", event.channel(), event.invoiceId());
 
-        } catch (NotificationSendException e) {
-            log.error("Failed to send notification for invoice: {}, channel: {}, attempt: {}. Error: {}",
-                event.invoiceId(), event.channel(), event.attempt(), e.getMessage());
-            deliveryService.recordFailure(event.invoiceId(), event.channel(), e.getMessage());
-            metricsService.recordNotificationFailed(event.channel());
-            throw new RuntimeException("Notification send failed", e);
         } catch (Exception e) {
-            log.error("Unexpected error processing InvoiceDueEvent for invoice: {}, channel: {}",
-                event.invoiceId(), event.channel(), e);
+            if (e instanceof NotificationSendException) {
+                log.error("Failed to send notification for invoice: {}, channel: {}, attempt: {}. Error: {}",
+                        event.invoiceId(), event.channel(), event.attempt(), e.getMessage());
+            } else {
+                log.error("Unexpected error processing InvoiceDueEvent for invoice: {}, channel: {}",
+                        event.invoiceId(), event.channel(), e);
+            }
             deliveryService.recordFailure(event.invoiceId(), event.channel(), e.getMessage());
             metricsService.recordNotificationFailed(event.channel());
             throw new RuntimeException("Notification processing failed", e);
