@@ -7,9 +7,10 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, String> {
     List<OutboxEvent> findByStatus(OutboxEventStatus status);
-    Optional<OutboxEvent> findTopByAggregateIdOrderByCreatedAtDesc(String aggregateId);
+    Optional<OutboxEvent> findTopByEventIdOrderByCreatedAtDesc(UUID eventId);
 }

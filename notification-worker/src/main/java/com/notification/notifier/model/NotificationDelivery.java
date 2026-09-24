@@ -24,7 +24,10 @@ public class NotificationDelivery {
     private UUID id;
 
     @Column(nullable = false)
-    private String invoiceId;
+    private UUID invoiceId;
+
+    @Column(nullable = false)
+    private UUID eventId;
 
     @Column(nullable = false, length = 50)
     private String channel;

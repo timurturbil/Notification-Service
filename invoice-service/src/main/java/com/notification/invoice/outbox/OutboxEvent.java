@@ -21,6 +21,9 @@ public class OutboxEvent {
     private UUID id;
 
     private String aggregateId;
+
+    private UUID eventId;
+
     private String topic;
 
     @Column(columnDefinition = "TEXT")

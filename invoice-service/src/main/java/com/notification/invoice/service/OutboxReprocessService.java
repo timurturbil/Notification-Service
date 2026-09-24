@@ -21,16 +21,17 @@ public class OutboxReprocessService {
     private final jakarta.persistence.EntityManager entityManager;
 
     @Transactional
-    public String republish(String invoiceId) throws JsonProcessingException {
-        var oldOutbox = outboxRepo.findTopByAggregateIdOrderByCreatedAtDesc(invoiceId)
-                .orElseThrow(() -> new RuntimeException("Outbox kaydı yok: " + invoiceId));
+    public UUID republish(UUID eventId) throws JsonProcessingException {
+        var oldOutbox = outboxRepo.findTopByEventIdOrderByCreatedAtDesc(eventId)
+                .orElseThrow(() -> new RuntimeException("Outbox kaydı yok: " + eventId));
 
         String oldPayload = oldOutbox.getPayload();
 
         InvoiceDueEvent oldEvent = objectMapper.readValue(oldPayload, InvoiceDueEvent.class);
 
+        UUID newEventId = UUID.randomUUID();
         InvoiceDueEvent newEvent = new InvoiceDueEvent(
-                UUID.randomUUID().toString(),
+                newEventId,
                 oldEvent.invoiceId(),
                 oldEvent.userId(),
                 oldEvent.dueDate(),
@@ -42,14 +43,15 @@ public class OutboxReprocessService {
         String newPayload = objectMapper.writeValueAsString(newEvent);
 
         OutboxEvent newOutbox = OutboxEvent.builder()
-                .aggregateId(invoiceId)
+                .aggregateId(oldOutbox.getAggregateId())
+                .eventId(newEventId)
                 .topic(oldOutbox.getTopic())
                 .payload(newPayload)
                 .status(com.notification.invoice.outbox.OutboxEventStatus.PENDING)
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        outboxRepo.save(newOutbox); // relay 500ms sonra bunu alıp billing.invoice_due'ya basacak
-        return "Outbox'a retry kaydı açıldı: " + newOutbox.getId() + " relay basacak";
+        outboxRepo.save(newOutbox);
+        return newEventId;
     }
 }

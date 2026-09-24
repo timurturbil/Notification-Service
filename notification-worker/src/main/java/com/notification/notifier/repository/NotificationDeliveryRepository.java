@@ -9,10 +9,5 @@ import java.util.UUID;
 
 @Repository
 public interface NotificationDeliveryRepository extends JpaRepository<NotificationDelivery, UUID> {
-
-    Optional<NotificationDelivery> findByInvoiceIdAndChannel(String invoiceId, String channel);
-
-    boolean existsByInvoiceIdAndChannel(String invoiceId, String channel);
-
-    Optional<NotificationDelivery> findByInvoiceIdAndStatus(String invoiceId, String status);
+    Optional<NotificationDelivery> findByEventId(UUID eventId);
 }

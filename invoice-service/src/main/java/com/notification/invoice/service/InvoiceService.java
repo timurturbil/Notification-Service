@@ -43,9 +43,10 @@ public class InvoiceService {
 
         for (var inv : dueInvoices) {
             try {
+                UUID eventId = UUID.randomUUID();
                 var event = new InvoiceDueEvent(
-                        UUID.randomUUID().toString(),
-                        inv.getId().toString(),
+                        eventId,
+                        inv.getId(),
                         inv.getUserId(),
                         date,
                         "EMAIL",
@@ -55,6 +56,7 @@ public class InvoiceService {
 
                 outboxEvents.add(OutboxEvent.builder()
                         .aggregateId(inv.getId().toString())
+                        .eventId(eventId)
                         .topic("billing.invoice_due")
                         .payload(objectMapper.writeValueAsString(event))
                         .status(OutboxEventStatus.PENDING)

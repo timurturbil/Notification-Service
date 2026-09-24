@@ -5,7 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -14,77 +14,61 @@ import java.util.concurrent.TimeUnit;
 public class IdempotencyService {
 
     private final StringRedisTemplate stringRedisTemplate;
-    private final NotificationDeliveryService notificationDeliveryService;
 
     private static final String REDIS_KEY_PREFIX = "idemp:";
     private static final long IDEMPOTENCY_TTL_SECONDS = 86400; // 24 hours
 
     /**
-     * Check if notification has already been sent for this invoice+channel combination.
-     * Uses both Redis (fast check) and database (authoritative check) for strong idempotency.
+     * Checks if this event has already been processed.
+     * Single source of truth for idempotency is eventId.
      *
-     * @param invoiceId Invoice ID
-     * @param channel Notification channel (EMAIL, SMS, CALL)
-     * @return true if notification already sent, false otherwise
+     * @param eventId Unique business event ID from outbox
+     * @return true if already processed, false otherwise
      */
-    public boolean isAlreadySent(String invoiceId, String channel) {
-        // First check: Redis cache (fast)
-        if (redisKeyExists(invoiceId, channel)) {
-            log.debug("Idempotency: Redis cache hit for invoice: {}, channel: {}", invoiceId, channel);
-            return true;
-        }
-
-        log.debug("Idempotency: No prior record found for invoice: {}, channel: {}", invoiceId, channel);
-        return false;
-    }
-
-    /**
-     * Mark notification as sent for this invoice+channel combination.
-     * Sets Redis key with 24-hour TTL for idempotency window.
-     *
-     * @param invoiceId Invoice ID
-     * @param channel Notification channel
-     */
-    public void markAsSent(String invoiceId, String channel) {
-        setRedisKey(invoiceId, channel);
-        log.debug("Idempotency: Marked as sent for invoice: {}, channel: {}", invoiceId, channel);
-    }
-
-    /**
-     * Check if Redis key exists for this invoice+channel.
-     */
-    private boolean redisKeyExists(String invoiceId, String channel) {
-        String key = buildRedisKey(invoiceId, channel);
+    public boolean isAlreadySent(UUID eventId) {
+        String key = buildRedisKey(eventId);
         Boolean exists = stringRedisTemplate.hasKey(key);
-        return Boolean.TRUE.equals(exists);
-    }
+        boolean hit = Boolean.TRUE.equals(exists);
 
-    /**
-     * Set Redis key with TTL for this invoice+channel.
-     */
-    private void setRedisKey(String invoiceId, String channel) {
-        String key = buildRedisKey(invoiceId, channel);
-        stringRedisTemplate.opsForValue().set(key, "1", IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
-    }
-
-    /**
-     * Build Redis key: "idemp:invoiceId:channel"
-     */
-    private String buildRedisKey(String invoiceId, String channel) {
-        return REDIS_KEY_PREFIX + invoiceId + ":" + channel;
-    }
-
-    /**
-     * Clear all idempotency keys for a given invoice ID.
-     */
-    public void clearByInvoiceId(String invoiceId) {
-        String pattern = REDIS_KEY_PREFIX + invoiceId + ":*";
-        Set<String> keys = stringRedisTemplate.keys(pattern);
-        if (!keys.isEmpty()) {
-            stringRedisTemplate.delete(keys);
-            log.info("Idempotency: Cleared {} keys for invoice: {} -> {}", keys.size(), invoiceId, keys);
-        } else {
-            log.info("Idempotency: No keys found to clear for invoice: {}", invoiceId);
+        if (hit) {
+            log.debug("Idempotency: Redis cache hit for eventId: {}", eventId);
         }
+        return hit;
+    }
+
+    /**
+     * Marks the event as processed with TTL.
+     * Should be called only after successful delivery.
+     *
+     * @param eventId Unique business event ID
+     */
+    public void markAsSent(UUID eventId) {
+        String key = buildRedisKey(eventId);
+        stringRedisTemplate.opsForValue().set(key, "1", IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+        log.debug("Idempotency: Marked as sent for eventId: {}", eventId);
+    }
+
+    /**
+     * Clears idempotency key for a single event.
+     * Used during reprocess flow - deletes only the target event's key.
+     * No KEYS pattern scan.
+     *
+     * @param eventId Event ID to clear
+     */
+    public void clearByEventId(UUID eventId) {
+        String key = buildRedisKey(eventId);
+        Boolean deleted = stringRedisTemplate.delete(key);
+        if (Boolean.TRUE.equals(deleted)) {
+            log.info("Idempotency: Cleared key for eventId: {}", eventId);
+        } else {
+            log.info("Idempotency: No key found to clear for eventId: {}", eventId);
+        }
+    }
+
+    /**
+     * Builds Redis key in format "idemp:{eventId}"
+     */
+    private String buildRedisKey(UUID eventId) {
+        return REDIS_KEY_PREFIX + eventId;
     }
 }

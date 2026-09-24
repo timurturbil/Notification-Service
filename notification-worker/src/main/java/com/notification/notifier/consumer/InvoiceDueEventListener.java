@@ -59,7 +59,7 @@ public class InvoiceDueEventListener {
 
         try {
             // Check for idempotent delivery
-            if (idempotencyService.isAlreadySent(event.invoiceId(), event.channel())) {
+            if (idempotencyService.isAlreadySent(event.eventId())) {
                 log.warn("Idempotency check failed: Notification already sent for invoice: {}, channel: {}. Skipping.",
                     event.invoiceId(), event.channel());
                 metricsService.recordNotificationDuplicate(event.channel());
@@ -70,7 +70,7 @@ public class InvoiceDueEventListener {
             if (!channelService.isChannelSupported(event.channel())) {
                 String errorMsg = "Unsupported notification channel: " + event.channel();
                 log.error(errorMsg);
-                deliveryService.recordFailure(event.invoiceId(), event.channel(), errorMsg);
+                deliveryService.recordFailure(event, errorMsg);
                 metricsService.recordNotificationFailed(event.channel());
                 return;
             }
@@ -82,8 +82,8 @@ public class InvoiceDueEventListener {
             sender.send(event);
 
             // Record successful delivery
-            deliveryService.recordDelivery(event.invoiceId(), event.channel());
-            idempotencyService.markAsSent(event.invoiceId(), event.channel());
+            deliveryService.recordDelivery(event);
+            idempotencyService.markAsSent(event.eventId());
             metricsService.recordNotificationSent(event.channel());
 
             log.info("Successfully sent {} notification for invoice: {}", event.channel(), event.invoiceId());
@@ -96,7 +96,7 @@ public class InvoiceDueEventListener {
                 log.error("Unexpected error processing InvoiceDueEvent for invoice: {}, channel: {}",
                         event.invoiceId(), event.channel(), e);
             }
-            deliveryService.recordFailure(event.invoiceId(), event.channel(), e.getMessage());
+            deliveryService.recordFailure(event, e.getMessage());
             metricsService.recordNotificationFailed(event.channel());
             throw new RuntimeException("Notification processing failed", e);
         }
@@ -116,8 +116,7 @@ public class InvoiceDueEventListener {
 
         try {
             // Record in database that this notification failed completely
-            deliveryService.recordDLQ(event.invoiceId(), event.channel(),
-                "Failed after 4 retry attempts, sent to DLQ");
+            deliveryService.recordDLQ(event, "Failed after 4 retry attempts, sent to DLQ");
             metricsService.recordNotificationDLQ(event.channel());
 
             // TODO: Alert operations team, send to incident management system, etc.
