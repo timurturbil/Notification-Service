@@ -62,6 +62,7 @@ public class InvoiceDueEventListener {
             if (idempotencyService.isAlreadySent(event.invoiceId(), event.channel())) {
                 log.warn("Idempotency check failed: Notification already sent for invoice: {}, channel: {}. Skipping.",
                     event.invoiceId(), event.channel());
+                metricsService.recordNotificationDuplicate(event.channel());
                 return;
             }
 

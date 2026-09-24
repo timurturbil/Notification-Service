@@ -182,6 +182,7 @@ Consumes invoice due events and sends notifications across multiple channels.
    - Counter: `notifications.sent` (by channel, by status)
    - Counter: `notifications.failed`
    - Counter: `notifications.dlq`
+   - Counter: `notifications.duplicate`
    - Expose at `GET /actuator/prometheus`
 
 **Future Implementation (Phase 3):**
