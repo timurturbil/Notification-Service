@@ -1,10 +1,11 @@
 package com.notification.invoice.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.notification.enums.Channel;
 import com.notification.events.InvoiceDueEvent;
 import com.notification.invoice.model.InvoiceStatus;
-import com.notification.invoice.outbox.OutboxEvent;
-import com.notification.invoice.outbox.OutboxEventStatus;
+import com.notification.invoice.model.OutboxEvent;
+import com.notification.invoice.model.OutboxEventStatus;
 import com.notification.invoice.repository.InvoiceRepository;
 import com.notification.invoice.repository.OutboxEventRepository;
 import lombok.RequiredArgsConstructor;
@@ -49,7 +50,7 @@ public class InvoiceService {
                         inv.getId(),
                         inv.getUserId(),
                         date,
-                        "EMAIL",
+                        Channel.EMAIL.name(),
                         "invoice_due_template",
                         1
                 );
@@ -69,8 +70,8 @@ public class InvoiceService {
             }
         }
 
-        outboxRepository.saveAll(outboxEvents); // tek batch insert
-        invoiceRepository.saveAll(dueInvoices); // tek batch update
+        outboxRepository.saveAll(outboxEvents);
+        invoiceRepository.saveAll(dueInvoices);
 
         return dueInvoices.size();
     }

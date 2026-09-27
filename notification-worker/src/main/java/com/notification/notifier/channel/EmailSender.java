@@ -1,9 +1,10 @@
 package com.notification.notifier.channel;
 
+import com.notification.enums.Channel;
 import com.notification.events.InvoiceDueEvent;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
 import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
@@ -12,7 +13,7 @@ public class EmailSender implements NotificationSender {
 
     @Override
     public boolean supports(String channel) {
-        return "EMAIL".equalsIgnoreCase(channel);
+        return Channel.EMAIL.name().equalsIgnoreCase(channel);
     }
 
     @Override
@@ -20,19 +21,22 @@ public class EmailSender implements NotificationSender {
         try {
             double r = ThreadLocalRandom.current().nextDouble();
 
-            // %5 her zaman patlar -> DLQ'ya düşer
+            // 5% permanent failure - always fails and should end up in DLQ
+            // Used to test DLT handling and reprocess flow
             double permanentFailureRate = 0.05;
             if (r < permanentFailureRate) {
-                throw new RuntimeException("CHAOS_PERMANENT - DLQ testi için " + event.invoiceId());
+                throw new RuntimeException("CHAOS_PERMANENT - for DLQ test " + event.invoiceId());
             }
 
-            // %15 transient patlar -> retry'de düzelme ihtimali var
-            double failureRate = 0.15;
-            if (r < permanentFailureRate + failureRate) {
-                throw new RuntimeException("CHAOS_TRANSIENT - retry testi için " + event.invoiceId());
+            // 15% transient failure - may succeed on retry
+            // Used to test @RetryableTopic backoff and retry mechanism
+            double transientFailureRate = 0.15;
+            if (r < permanentFailureRate + transientFailureRate) {
+                throw new RuntimeException("CHAOS_TRANSIENT - for retry test " + event.invoiceId());
             }
 
-            // arada latency de ekle ki Grafana'da lag gör
+            // 2% artificial latency - to simulate slow provider
+            // and observe consumer lag / latency in Grafana
             if (r < 0.02) {
                 Thread.sleep(200);
             }
@@ -46,6 +50,6 @@ public class EmailSender implements NotificationSender {
     }
 
     private void simulateEmailSend(InvoiceDueEvent event) {
-        // mock
+        // mock email provider call
     }
 }

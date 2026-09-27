@@ -16,7 +16,7 @@
 		<!-- Common Modules -->
 		<dependency>
 			<groupId>com.notification</groupId>
-			<artifactId>common-events</artifactId>
+			<artifactId>common</artifactId>
 		</dependency>
 
 		<!-- Spring Boot Web -->

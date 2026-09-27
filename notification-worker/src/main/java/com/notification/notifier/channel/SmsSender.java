@@ -1,5 +1,6 @@
 package com.notification.notifier.channel;
 
+import com.notification.enums.Channel;
 import com.notification.events.InvoiceDueEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -10,7 +11,7 @@ public class SmsSender implements NotificationSender {
 
     @Override
     public boolean supports(String channel) {
-        return "SMS".equalsIgnoreCase(channel);
+        return Channel.SMS.name().equalsIgnoreCase(channel);
     }
 
     @Override

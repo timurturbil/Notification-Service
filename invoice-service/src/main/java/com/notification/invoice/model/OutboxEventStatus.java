@@ -1,4 +1,4 @@
-package com.notification.invoice.outbox;
+package com.notification.invoice.model;
 
 public enum OutboxEventStatus {
     PENDING,

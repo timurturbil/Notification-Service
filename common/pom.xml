@@ -8,9 +8,9 @@
 		<version>1.0.0-SNAPSHOT</version>
 	</parent>
 
-	<artifactId>common-events</artifactId>
-	<name>Common Events</name>
-	<description>Event definitions for notification service</description>
+	<artifactId>common</artifactId>
+	<name>Common</name>
+	<description>Common utilities and definitions for notification service</description>
 	<packaging>jar</packaging>
 
 </project>

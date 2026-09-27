@@ -1,13 +1,18 @@
 package com.notification.notifier.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.notification.events.InvoiceDueEvent;
 import com.notification.notifier.model.NotificationDelivery;
+import com.notification.notifier.model.NotificationStatus;
 import com.notification.notifier.repository.NotificationDeliveryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,96 +22,100 @@ import java.util.UUID;
 public class NotificationDeliveryService {
 
     private final NotificationDeliveryRepository repository;
+    private final ObjectMapper objectMapper;
 
-    /**
-     * Find existing notification delivery record.
-     */
     public Optional<NotificationDelivery> findByEventId(UUID eventId) {
         return repository.findByEventId(eventId);
     }
 
-    /**
-     * Create or update notification delivery record with DELIVERED status.
-     */
-    @Transactional
-    public NotificationDelivery recordDelivery(InvoiceDueEvent event) {
+    @Transactional(readOnly = true)
+    public List<NotificationDelivery> findByStatus(String status) {
+        return repository.findByStatus(status);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordDelivery(InvoiceDueEvent event) {
         Optional<NotificationDelivery> existing = findByEventId(event.eventId());
 
         if (existing.isPresent()) {
             NotificationDelivery delivery = existing.get();
-            delivery.setStatus("DELIVERED");
+            delivery.setStatus(NotificationStatus.DELIVERED.name());
             delivery.setAttemptCount(delivery.getAttemptCount() + 1);
             delivery.setLastError(null);
             log.debug("Updated notification delivery record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
-            return repository.save(delivery);
         } else {
+            String eventPayload = toJsonPayload(event);
             NotificationDelivery delivery = NotificationDelivery.builder()
                 .invoiceId(event.invoiceId())
                 .eventId(event.eventId())
+                .eventPayload(eventPayload)
                 .channel(event.channel())
-                .status("DELIVERED")
+                .status(NotificationStatus.DELIVERED.name())
                 .attemptCount(1)
                 .build();
             log.debug("Created notification delivery record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
-            return repository.save(delivery);
+            repository.save(delivery);
         }
     }
 
-    /**
-     * Record failed delivery attempt.
-     */
-    @Transactional
-    public NotificationDelivery recordFailure(InvoiceDueEvent event, String errorMsg) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordFailure(InvoiceDueEvent event, String errorMsg) {
         Optional<NotificationDelivery> existing = findByEventId(event.eventId());
         
         if (existing.isPresent()) {
             NotificationDelivery delivery = existing.get();
-            delivery.setStatus("FAILED");
+            delivery.setStatus(NotificationStatus.FAILED.name());
             delivery.setAttemptCount(delivery.getAttemptCount() + 1);
             delivery.setLastError(errorMsg);
             log.debug("Updated notification failure record for invoice: {}, channel: {}, error: {}", 
                 event.invoiceId(), event.channel(), errorMsg);
-            return repository.save(delivery);
         } else {
+            String eventPayload = toJsonPayload(event);
             NotificationDelivery delivery = NotificationDelivery.builder()
                 .invoiceId(event.invoiceId())
                 .eventId(event.eventId())
+                .eventPayload(eventPayload)
                 .channel(event.channel())
-                .status("FAILED")
+                .status(NotificationStatus.FAILED.name())
                 .attemptCount(1)
                 .lastError(errorMsg)
                 .build();
             log.debug("Created notification failure record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
-            return repository.save(delivery);
+            repository.save(delivery);
         }
     }
 
-    /**
-     * Record that notification was sent to DLQ (dead letter queue).
-     */
-    @Transactional
-    public NotificationDelivery recordDLQ(InvoiceDueEvent event, String errorMsg) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordDLQ(InvoiceDueEvent event, String errorMsg) {
         Optional<NotificationDelivery> existing = findByEventId(event.eventId());
 
         if (existing.isPresent()) {
             NotificationDelivery delivery = existing.get();
-            delivery.setStatus("DLQ");
+            delivery.setStatus(NotificationStatus.DLQ.name());
             delivery.setAttemptCount(delivery.getAttemptCount() + 1);
             delivery.setLastError(errorMsg);
             log.warn("Updated notification DLQ record for invoice: {}, channel: {}, error: {}", 
                 event.invoiceId(), event.channel(), errorMsg);
-            return repository.save(delivery);
         } else {
             NotificationDelivery delivery = NotificationDelivery.builder()
                 .invoiceId(event.invoiceId())
                 .eventId(event.eventId())
                 .channel(event.channel())
-                .status("DLQ")
+                .status(NotificationStatus.DLQ.name())
                 .attemptCount(1)
                 .lastError(errorMsg)
                 .build();
             log.warn("Created notification DLQ record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
-            return repository.save(delivery);
+            repository.save(delivery);
+        }
+    }
+
+    private String toJsonPayload(InvoiceDueEvent event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize event payload for eventId: {}", event.eventId(), e);
+            return null;
         }
     }
 }

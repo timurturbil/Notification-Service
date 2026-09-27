@@ -10,9 +10,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "notification_deliveries", uniqueConstraints = {
-    @UniqueConstraint(columnNames = {"invoice_id", "channel"})
-})
+@Table(name = "notification_deliveries")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -29,11 +27,14 @@ public class NotificationDelivery {
     @Column(nullable = false)
     private UUID eventId;
 
+    @Column(name = "event_payload", columnDefinition = "TEXT")
+    private String eventPayload;
+
     @Column(nullable = false, length = 50)
     private String channel;
 
     @Column(nullable = false, length = 50)
-    private String status = "PENDING";
+    private String status;
 
     @Column(nullable = false)
     private Integer attemptCount = 0;

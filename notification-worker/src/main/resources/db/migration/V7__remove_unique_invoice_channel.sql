@@ -1,0 +1,4 @@
+ALTER TABLE notification_deliveries
+DROP CONSTRAINT IF EXISTS notification_deliveries_invoice_id_channel_key;
+
+DROP INDEX IF EXISTS notification_deliveries_invoice_id_channel_key;

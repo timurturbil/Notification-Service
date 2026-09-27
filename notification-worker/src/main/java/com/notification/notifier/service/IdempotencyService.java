@@ -48,22 +48,6 @@ public class IdempotencyService {
         log.debug("Idempotency: Marked as sent for eventId: {}", eventId);
     }
 
-    /**
-     * Clears idempotency key for a single event.
-     * Used during reprocess flow - deletes only the target event's key.
-     * No KEYS pattern scan.
-     *
-     * @param eventId Event ID to clear
-     */
-    public void clearByEventId(UUID eventId) {
-        String key = buildRedisKey(eventId);
-        Boolean deleted = stringRedisTemplate.delete(key);
-        if (Boolean.TRUE.equals(deleted)) {
-            log.info("Idempotency: Cleared key for eventId: {}", eventId);
-        } else {
-            log.info("Idempotency: No key found to clear for eventId: {}", eventId);
-        }
-    }
 
     /**
      * Builds Redis key in format "idemp:{eventId}"

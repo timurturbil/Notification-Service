@@ -1,4 +1,4 @@
-package com.notification.notifier.metrics;
+package com.notification.notifier.service;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -52,14 +52,5 @@ public class NotificationMetricsService {
                 .register(meterRegistry)
                 .increment();
         log.debug("Metrics: Incremented notifications.duplicate for channel: {}", channel);
-    }
-
-    public void recordAttemptCount(String channel, int attemptNumber) {
-        io.micrometer.core.instrument.Timer.builder("notifications.attempt")
-                .description("Notification attempt tracking")
-                .tag("channel", channel)
-                .tag("attempt", String.valueOf(attemptNumber))
-                .register(meterRegistry)
-                .record(() -> { });
     }
 }

@@ -37,15 +37,4 @@ public class NotificationChannelService {
     public boolean isChannelSupported(String channel) {
         return senders.stream().anyMatch(sender -> sender.supports(channel));
     }
-
-    /**
-     * Get list of all supported channels.
-     */
-    public List<String> getSupportedChannels() {
-        return senders.stream()
-            .flatMap(sender -> List.of("EMAIL", "SMS", "CALL").stream()
-                .filter(sender::supports))
-            .distinct()
-            .toList();
-    }
 }
