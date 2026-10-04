@@ -1,4 +1,4 @@
-package com.notification.invoice.model;
+package com.notification.enums;
 
 public enum InvoiceStatus {
     UNPAID,

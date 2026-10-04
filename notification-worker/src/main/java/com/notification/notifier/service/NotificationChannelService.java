@@ -14,13 +14,6 @@ public class NotificationChannelService {
 
     private final List<NotificationSender> senders;
 
-    /**
-     * Find the appropriate sender for the given channel.
-     *
-     * @param channel Channel name (EMAIL, SMS, CALL)
-     * @return NotificationSender that supports this channel
-     * @throws IllegalArgumentException if no sender found for channel
-     */
     public NotificationSender getSenderForChannel(String channel) {
         return senders.stream()
             .filter(sender -> sender.supports(channel))
@@ -31,9 +24,6 @@ public class NotificationChannelService {
             });
     }
 
-    /**
-     * Check if channel is supported.
-     */
     public boolean isChannelSupported(String channel) {
         return senders.stream().anyMatch(sender -> sender.supports(channel));
     }

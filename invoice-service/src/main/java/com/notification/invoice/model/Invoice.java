@@ -1,5 +1,6 @@
 package com.notification.invoice.model;
 
+import com.notification.enums.InvoiceStatus;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;

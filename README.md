@@ -83,8 +83,8 @@ Scheduled worker for detecting invoices due in the near future.
   ```
 
 - **Event Production:**
-  - Publishes `InvoiceDueEvent` to Kafka topic `billing.invoice_due`
-  - Each event contains: eventId, invoiceId, userId, dueDate, channel, templateId, attempt
+  - Publishes `InvoiceDueEvent` to Kafka topic `invoice_due`
+  - Each event contains: eventId, invoiceId, userId, dueDate, channel, topic
 
 **Implementation (Phase 2 - Complete):**
 
@@ -135,7 +135,7 @@ public void checkDueInvoices() { ... }
 - Acks: `all` (ensures delivery)
 - Retries: 3
 - Batch settings for throughput optimization
-- Topic: `billing.invoice_due` (auto-created by Kafka)
+- Topic: `invoice_due` (auto-created by Kafka)
 
 ✅ **Error Handling & Logging**
 - Graceful error handling with proper exception wrapping
@@ -154,7 +154,7 @@ Consumes invoice due events and sends notifications across multiple channels.
 
 **Key Features:**
 - **Kafka Consumer:**
-   - Listens to `billing.invoice_due` topic with consumer group `notification-group`
+   - Listens to `invoice_due` topic with consumer group `notification-group`
    - Implements idempotency using Redis SET with NX flag
    - Falls back to database unique constraint on (invoice_id, channel)
 
@@ -194,7 +194,7 @@ Consumes invoice due events and sends notifications across multiple channels.
 
 | Topic | Partitions | Purpose |
 |-------|-----------|---------|
-| `billing.invoice_due` | 3 | Primary invoice due event stream |
+| `invoice_due` | 3 | Primary invoice due event stream |
 | `notifications.retry.sms` | 1 | SMS delivery retries |
 | `notifications.retry.email` | 1 | Email delivery retries |
 | `notifications.retry.call` | 1 | Call delivery retries |

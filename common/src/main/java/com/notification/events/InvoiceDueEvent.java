@@ -9,6 +9,5 @@ public record InvoiceDueEvent(
     String userId,
     LocalDate dueDate,
     String channel,
-    String templateId,
-    int attempt
+    String topic
 ) {}

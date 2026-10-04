@@ -18,10 +18,6 @@ public class NotificationDlqController {
 
     private final NotificationProcessingService processingService;
 
-    /**
-     * POST /api/admin/notifications/dlq/reprocess
-     * Retries all notifications in DLQ
-     */
     @PostMapping("/dlq/reprocess")
     public ResponseEntity<Map<String, Object>> reprocessAllDlq() {
         log.info("Manual DLQ reprocess triggered");
@@ -30,22 +26,6 @@ public class NotificationDlqController {
 
         return ResponseEntity.ok(Map.of(
                 "message", "DLQ reprocess completed",
-                "reprocessedCount", reprocessed
-        ));
-    }
-
-    /**
-     * POST /api/admin/notifications/failed/reprocess
-     * Retries all notifications in FAILED
-     */
-    @PostMapping("/failed/reprocess")
-    public ResponseEntity<Map<String, Object>> reprocessAllFailed() {
-        log.info("Manual failed reprocess triggered");
-
-        int reprocessed = processingService.reprocessAllFailed();
-
-        return ResponseEntity.ok(Map.of(
-                "message", "Failed reprocess completed",
                 "reprocessedCount", reprocessed
         ));
     }

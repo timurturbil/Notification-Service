@@ -103,6 +103,9 @@ management:
       prometheus:
         enabled: true
 
+invoice-service:
+  url: http://localhost:8081
+
 # Logging Configuration
 logging:
   level:

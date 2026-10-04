@@ -13,15 +13,6 @@ import org.springframework.kafka.listener.ContainerProperties;
 @EnableKafka
 @Configuration
 public class KafkaConsumerConfiguration {
-
-    /**
-     * Configure Kafka listener container factory.
-     * - Auto-commit disabled: manual acknowledge in listener
-     * - Batch processing: false (process one message at a time)
-     * - Concurrency: 3 (process 3 messages in parallel)
-     * - Poll timeout: 3000ms
-     * - Relative offset reset: latest (skip old messages on startup)
-     */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, InvoiceDueEvent> kafkaListenerContainerFactory(
         ConsumerFactory<String, InvoiceDueEvent> consumerFactory) {

@@ -1,15 +1,14 @@
 package com.notification.invoice.controller;
 
-import com.notification.invoice.model.Invoice;
+import com.notification.enums.InvoiceStatus;
 import com.notification.invoice.service.InvoiceService;
+import com.notification.records.InvoiceStatusResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -31,5 +30,11 @@ public class InvoiceController {
                 "date", targetDate,
                 "scheduledCount", count
         ));
+    }
+
+    @GetMapping("/{id}/status")
+    public ResponseEntity<InvoiceStatusResponse> getStatus(@PathVariable UUID id) {
+        InvoiceStatus status = invoiceService.getStatus(id);
+        return ResponseEntity.ok(new InvoiceStatusResponse(id, status));
     }
 }

@@ -1,5 +1,6 @@
 package com.notification.notifier.service;
 
+import com.notification.notifier.model.NotificationStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -14,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 public class IdempotencyService {
 
     private final StringRedisTemplate stringRedisTemplate;
+    private final NotificationDeliveryService deliveryService;
 
     private static final String REDIS_KEY_PREFIX = "idemp:";
     private static final long IDEMPOTENCY_TTL_SECONDS = 86400; // 24 hours
@@ -26,14 +28,28 @@ public class IdempotencyService {
      * @return true if already processed, false otherwise
      */
     public boolean isAlreadySent(UUID eventId) {
-        String key = buildRedisKey(eventId);
-        Boolean exists = stringRedisTemplate.hasKey(key);
-        boolean hit = Boolean.TRUE.equals(exists);
-
-        if (hit) {
-            log.debug("Idempotency: Redis cache hit for eventId: {}", eventId);
+        try {
+            if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(buildRedisKey(eventId)))) {
+                log.debug("Idempotency: Redis cache hit for eventId: {}", eventId);
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("Idempotency: Redis check failed, falling back to DB, eventId: {}", eventId, e);
         }
-        return hit;
+
+        boolean delivered = deliveryService.findByEventId(eventId)
+                .map(d -> NotificationStatus.DELIVERED.name().equals(d.getStatus()))
+                .orElse(false);
+
+        if (delivered) {
+            log.debug("Idempotency: DB hit for eventId: {}, re-warming Redis", eventId);
+            try {
+                markAsSent(eventId);
+            } catch (Exception e) {
+                log.warn("Idempotency: Redis re-warm failed, eventId: {}", eventId, e);
+            }
+        }
+        return delivered;
     }
 
     /**

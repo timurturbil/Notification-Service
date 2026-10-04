@@ -3,15 +3,17 @@ package com.notification.invoice.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.notification.enums.Channel;
 import com.notification.events.InvoiceDueEvent;
-import com.notification.invoice.model.InvoiceStatus;
+import com.notification.enums.InvoiceStatus;
+import com.notification.events.InvoiceDueTopics;
 import com.notification.invoice.model.OutboxEvent;
 import com.notification.invoice.model.OutboxEventStatus;
 import com.notification.invoice.repository.InvoiceRepository;
 import com.notification.invoice.repository.OutboxEventRepository;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -24,18 +26,23 @@ public class InvoiceService {
     private final InvoiceRepository invoiceRepository;
     private final OutboxEventRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
-    @Value("${application.invoice.due-check.batch-size:1000}")
-    private int batchSize;
+    private static final int BATCH_SIZE = 1000;
 
     public int triggerDueCheck(LocalDate date) {
-        return processBatch(date);
+        int total = 0;
+        while (true) {
+            Integer processed = transactionTemplate.execute(status -> processBatch(date));
+            if (processed == null || processed == 0) break;
+            total += processed;
+        }
+        return total;
     }
 
-    @Transactional
-    protected int processBatch(LocalDate date) {
+    private int processBatch(LocalDate date) {
         var dueInvoices = invoiceRepository.findBatchForUpdate(
-                date, InvoiceStatus.UNPAID.name(), batchSize
+                date, InvoiceStatus.UNPAID.name(), BATCH_SIZE
         );
 
         if (dueInvoices.isEmpty()) return 0;
@@ -45,20 +52,19 @@ public class InvoiceService {
         for (var inv : dueInvoices) {
             try {
                 UUID eventId = UUID.randomUUID();
-                var event = new InvoiceDueEvent(
+                InvoiceDueEvent event = new InvoiceDueEvent(
                         eventId,
                         inv.getId(),
                         inv.getUserId(),
-                        date,
+                        inv.getDueDate(),
                         Channel.EMAIL.name(),
-                        "invoice_due_template",
-                        1
+                        InvoiceDueTopics.MAIN
                 );
 
                 outboxEvents.add(OutboxEvent.builder()
                         .aggregateId(inv.getId().toString())
                         .eventId(eventId)
-                        .topic("billing.invoice_due")
+                        .topic(event.topic())
                         .payload(objectMapper.writeValueAsString(event))
                         .status(OutboxEventStatus.PENDING)
                         .retryCount(0)
@@ -74,5 +80,12 @@ public class InvoiceService {
         invoiceRepository.saveAll(dueInvoices);
 
         return dueInvoices.size();
+    }
+
+    @Transactional(readOnly = true)
+    public InvoiceStatus getStatus(UUID invoiceId) {
+        return invoiceRepository.findById(invoiceId).
+                map(inv -> InvoiceStatus.valueOf(String.valueOf(inv.getStatus()))).
+                orElseThrow(() -> new EntityNotFoundException("Invoice not found: " + invoiceId));
     }
 }

@@ -11,21 +11,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class OutboxReprocessService {
-
     private final OutboxEventRepository outboxRepo;
 
     @Transactional
     public int reprocessAllFailed() {
-        var failedList = outboxRepo.findByStatusForUpdate(OutboxEventStatus.FAILED);
-        if (failedList.isEmpty()) return 0;
-
-        for (var outbox : failedList) {
-            outbox.setStatus(OutboxEventStatus.PENDING);
-            outbox.setRetryCount(0);
-            outbox.setPublishedAt(null);
-        }
-
-        outboxRepo.saveAll(failedList);
-        return failedList.size();
+        return outboxRepo.bulkReprocess(OutboxEventStatus.FAILED, OutboxEventStatus.PENDING);
     }
 }

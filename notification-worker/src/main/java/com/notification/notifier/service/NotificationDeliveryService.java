@@ -28,6 +28,10 @@ public class NotificationDeliveryService {
         return repository.findByEventId(eventId);
     }
 
+    public List<NotificationDelivery> findBatchForUpdate(String status, int limit) {
+        return repository.findBatchForUpdate(status, limit);
+    }
+
     @Transactional(readOnly = true)
     public List<NotificationDelivery> findByStatus(String status) {
         return repository.findByStatus(status);
@@ -51,7 +55,7 @@ public class NotificationDeliveryService {
                 .eventPayload(eventPayload)
                 .channel(event.channel())
                 .status(NotificationStatus.DELIVERED.name())
-                .attemptCount(1)
+                .attemptCount(0)
                 .build();
             log.debug("Created notification delivery record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
             repository.save(delivery);
@@ -77,7 +81,7 @@ public class NotificationDeliveryService {
                 .eventPayload(eventPayload)
                 .channel(event.channel())
                 .status(NotificationStatus.FAILED.name())
-                .attemptCount(1)
+                .attemptCount(0)
                 .lastError(errorMsg)
                 .build();
             log.debug("Created notification failure record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
@@ -102,11 +106,26 @@ public class NotificationDeliveryService {
                 .eventId(event.eventId())
                 .channel(event.channel())
                 .status(NotificationStatus.DLQ.name())
-                .attemptCount(1)
+                 .eventPayload(toJsonPayload(event))
+                .attemptCount(0)
                 .lastError(errorMsg)
                 .build();
             log.warn("Created notification DLQ record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
             repository.save(delivery);
+        }
+    }
+
+    @Transactional
+    public void recordReplay(InvoiceDueEvent event) {
+        Optional<NotificationDelivery> existing = findByEventId(event.eventId());
+
+        if (existing.isPresent()) {
+            NotificationDelivery delivery = existing.get();
+            delivery.setStatus(NotificationStatus.REPLAYED.name());
+            delivery.setAttemptCount(0);
+            log.info("Updated notification replay record for invoice: {}, channel: {}", event.invoiceId(), event.channel());
+        } else {
+            log.warn("Attempted to replay notification for unknown invoice: {}, channel: {}", event.invoiceId(), event.channel());
         }
     }
 

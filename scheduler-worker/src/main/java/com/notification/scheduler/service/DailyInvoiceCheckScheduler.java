@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 
 @Service
 @RequiredArgsConstructor
@@ -15,22 +16,21 @@ import java.time.LocalDate;
 public class DailyInvoiceCheckScheduler {
 
     private final InvoiceServiceClient invoiceServiceClient;
+    private static final ZoneId TR = ZoneId.of("Europe/Istanbul");
 
-    //    @Scheduled(cron = "0 0 2 * * *")
-    //    @SchedulerLock(
-    //        name = "dailyInvoiceCheck",
-    //        lockAtMostFor = "4m59s",
-    //        lockAtLeastFor = "5m"
-    //    )
-    @Scheduled(cron = "*/10 * * * * *")
-    @SchedulerLock(name = "dailyInvoiceCheck", lockAtMostFor = "30s", lockAtLeastFor = "5s")
+    @Scheduled(cron = "0 0 8 * * *", zone = "Europe/Istanbul")
+    @SchedulerLock(
+            name = "dailyInvoiceCheck",
+            lockAtMostFor = "10m",
+            lockAtLeastFor = "1m"
+    )
     public void checkDueInvoices() {
-        LocalDate targetDate = LocalDate.now().plusDays(3);
+        LocalDate targetDate = LocalDate.now(TR).plusDays(3);
         log.info("Starting daily invoice due check for targetDate={}", targetDate);
 
         try {
             var response = invoiceServiceClient.triggerDueCheck(targetDate);
-            log.info("Daily invoice due check completed -> date={}, scheduledCount={}",
+            log.info("Daily check completed -> date={}, scheduledCount={}",
                     response.date(), response.scheduledCount());
         } catch (Exception e) {
             log.error("Error during daily invoice check for date={}", targetDate, e);

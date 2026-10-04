@@ -17,4 +17,16 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
     Optional<NotificationDelivery> findByEventId(UUID eventId);
 
     List<NotificationDelivery> findByStatus(String status);
+
+    @Query(value = """
+        SELECT * FROM notification_deliveries
+        WHERE status = :status
+        ORDER BY id ASC
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<NotificationDelivery> findBatchForUpdate(
+            @Param("status") String status,
+            @Param("limit") int limit
+    );
 }

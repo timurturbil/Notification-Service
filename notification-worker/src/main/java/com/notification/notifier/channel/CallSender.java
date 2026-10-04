@@ -2,6 +2,8 @@ package com.notification.notifier.channel;
 
 import com.notification.enums.Channel;
 import com.notification.events.InvoiceDueEvent;
+import com.notification.notifier.exception.NotificationSendException;
+import com.notification.notifier.exception.TransientNotificationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -27,7 +29,7 @@ public class CallSender implements NotificationSender {
         } catch (Exception e) {
             String errorMsg = "Failed to initiate IVR CALL notification for invoice: " + event.invoiceId();
             log.error(errorMsg, e);
-            throw new NotificationSendException(errorMsg, e);
+            throw new TransientNotificationException(errorMsg, e);
         }
     }
 
