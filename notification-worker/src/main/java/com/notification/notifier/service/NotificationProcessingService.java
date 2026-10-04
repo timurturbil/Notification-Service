@@ -47,8 +47,8 @@ public class NotificationProcessingService {
         if (invoiceEligibilityService.shouldSkip(event)) return;
 
         if (!channelService.isChannelSupported(event.channel())) {
-            deliveryService.recordFailure(event, "Unsupported channel");
-            metricsService.recordNotificationFailed(event.channel());
+            deliveryService.recordDLQ(event, "Unsupported channel");
+            metricsService.recordNotificationDLQ(event.channel());
             return;
         }
 
