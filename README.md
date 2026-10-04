@@ -1,21 +1,160 @@
 # Notification Service
 
-A production-ready, event-driven notification service built with Java 21 and Spring Boot 3.5. This microservices architecture demonstrates modern patterns including the Transactional Outbox Pattern, distributed scheduling with ShedLock, idempotent message consumption, and comprehensive observability.
+An event-driven invoice-due notification system built with Java 21 and Spring Boot 3.5. It demonstrates the Transactional Outbox pattern, Kafka non-blocking retries with a dead letter topic, idempotent consumption, distributed scheduling with ShedLock, and metrics-based observability.
 
-## Quick Start
+Three services work together:
+
+| Service | Role | Port |
+|---|---|---|
+| `scheduler-worker` | Cron trigger. Calls `invoice-service` once a day and holds no business logic. | 8082 |
+| `invoice-service` | Finds due invoices, writes events to an outbox table, relays them to Kafka. | 8081 |
+| `notification-worker` | Consumes events and sends notifications (mock senders) with retry, idempotency and DLQ handling. | 8083 |
+
+Shared contracts (`InvoiceDueEvent`, `InvoiceDueTopics`, enums) live in the `common` module.
+
+> **Status:** this is a reference implementation. Senders are mocks, and `EmailSender` injects random failures for chaos testing. See [Known limitations](#known-limitations) before using it with real providers.
+
+## Architecture
+
+![Architecture](architecture.png)
+
+### Concepts
+
+- **Outbox:** the event is written to the database in the same transaction as the business change, then published to Kafka by a separate relay. This closes the "saved in DB but never reached Kafka" gap.
+- **Retry:** transient failures are retried through Kafka retry topics with exponential backoff instead of blocking the main topic.
+- **Idempotency:** the same `eventId` never produces a second notification, even if the event is delivered twice.
+- **DLT vs DLQ:** *DLT* is the Kafka dead letter **topic** (`invoice-due-notification-dlt`). *DLQ* is a **status** in the `notification_deliveries` table, used for events that need manual attention (permanent errors and events whose retries are exhausted).
+
+## Services
+
+### 1. scheduler-worker
+
+A stateless trigger with no business logic.
+
+- Runs daily at 08:00 (`Europe/Istanbul`) with `@Scheduled(cron = "0 0 8 * * *", zone = "Europe/Istanbul")`.
+- Takes a distributed lock with ShedLock on Redis (lock name `dailyInvoiceCheck`, `lockAtMostFor = 10m`, `lockAtLeastFor = 1m`), so only one instance runs at a time.
+- Computes `targetDate = today + 3 days` and calls `POST /api/invoices/due-check?date=<targetDate>` on `invoice-service` through an OpenFeign client (`invoice-service.url`, default `http://localhost:8081`).
+
+### 2. invoice-service
+
+Produces the events.
+
+**Due check** (`POST /api/invoices/due-check`)
+- Selects invoices with `status = UNPAID`, `due_date <= :date` (overdue invoices included) and `notification_scheduled = false`, using `FOR UPDATE SKIP LOCKED` in batches of 1000. Concurrent instances skip locked rows instead of waiting.
+- Per batch, in **one transaction**: inserts one `InvoiceDueEvent` per invoice into the `outbox` table as `PENDING` and sets `notification_scheduled = true`. Batches repeat until nothing is left.
+- Events are never sent to Kafka directly.
+
+**OutboxRelayService**
+- Runs every 5 seconds, reads up to 1000 `PENDING` rows, and publishes each to Kafka with `key = invoiceId`, waiting for the broker ACK (5 s timeout).
+- Success: row becomes `PUBLISHED`. Failure: `retryCount++`, and after 5 failures the row becomes `FAILED`.
+
+**Other endpoints**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/invoices/{id}/status` | Current invoice status. Called by `notification-worker` before sending. |
+| `POST /api/admin/outbox/failed/reprocess` | Bulk-updates `FAILED` outbox rows back to `PENDING` and resets `retryCount`. The relay then picks them up again with the same payload and `eventId`. |
+
+**Event contract**
+
+```java
+public record InvoiceDueEvent(
+    UUID eventId, UUID invoiceId, String userId,
+    LocalDate dueDate, String channel, String topic) {}
+```
+
+`channel` is currently always `EMAIL`.
+
+### 3. notification-worker
+
+Consumes `invoice-due` and its retry topics (`@RetryableTopic` + `@KafkaListener`, container concurrency 3, offset commit after every record).
+
+For each event, `process()` runs these steps in order:
+
+1. **Idempotency check:** looks for `idemp:{eventId}` in Redis; if missing, checks `notification_deliveries` for a `DELIVERED` row (and re-warms Redis on a hit). A duplicate is counted in `notifications.duplicate` and stops without retry.
+2. **Eligibility check:** calls `GET /api/invoices/{id}/status` on `invoice-service` via Feign. `PAID` or `CANCELLED` invoices are skipped. A failed call is treated as a transient error.
+3. **Channel selection (Strategy pattern):** `EmailSender`, `SmsSender` or `CallSender`, chosen by `supports(channel)`.
+4. **Send:** all senders are mocks.
+5. **Record:** on success a `DELIVERED` row is written, the Redis key is set with a 24 h TTL, and `notifications.sent` is incremented. These side effects run in a guarded block, so a failure in them is logged but never triggers a retry.
+
+**Failure handling**
+
+| Situation | Result |
+|---|---|
+| Duplicate event | Metric `notifications.duplicate`, skipped. No retry. |
+| Invoice is `PAID` / `CANCELLED` | Skipped; idempotency key is written. |
+| Invoice status call fails | Transient error, goes to the retry chain. |
+| Unsupported channel | `FAILED` row + `notifications.failed`, skipped. No retry. |
+| `PermanentNotificationException` | `DLQ` row + `notifications.dlq`. No Kafka retry. |
+| Transient or unexpected exception | `FAILED` row + `notifications.failed`, exception thrown, message goes to the next retry topic. |
+| All 4 attempts fail | `@DltHandler` writes a `DLQ` row + `notifications.dlq`; the message stays in the DLT. |
+
+**Retry policy:** 4 attempts in total (1 main + 3 retry topics), exponential backoff of 2 s, 8 s and 32 s (multiplier 4.0).
+
+**Delivery statuses** (`notification_deliveries.status`): `DELIVERED`, `FAILED`, `DLQ`, `REPLAYED`.
+
+## Kafka topics
+
+| Topic | Purpose |
+|---|---|
+| `invoice-due` | Main event stream |
+| `invoice-due-notification-retry-0` / `-1` / `-2` | Retry topics for the `notification-worker` consumer group |
+| `invoice-due-notification-dlt` | Dead letter topic after all attempts fail |
+
+Names and suffixes are defined once in `InvoiceDueTopics` (`common` module). The local setup creates every topic with **1 partition**, so the consumer's `concurrency=3` only gives parallelism once the topics have 3 or more partitions.
+
+## DLQ reprocess
+
+Nothing is retried forever. Failed work is parked and an admin decides when to replay it.
+
+`POST /api/admin/notifications/dlq/reprocess`
+
+1. Reads `notification_deliveries` rows with `status = DLQ` (`FOR UPDATE SKIP LOCKED`, batches of 1000).
+2. Converts each stored `eventPayload` back to an `InvoiceDueEvent`.
+3. Publishes the event with `key = invoiceId` to **`invoice-due-notification-retry-0`** and waits for the ACK (5 s).
+4. Marks the row `REPLAYED`.
+
+Why `retry-0` and not the main topic? Only this consumer group reads the retry topics, so other consumers of `invoice-due` are not triggered again. The replayed event goes through the idempotency and eligibility checks from the start.
+
+A replayed event whose cause was never fixed (for example a permanently invalid recipient) fails again and returns to `DLQ`.
+
+## Observability
+
+- **Micrometer counters** (all tagged with `channel`):
+    - `notifications.sent`: successful deliveries
+    - `notifications.failed`: transient failures and unsupported channels
+    - `notifications.dlq`: events written as `DLQ`, both permanent errors and DLT arrivals
+    - `notifications.duplicate`: duplicates stopped by idempotency
+- **Prometheus** scrapes `/actuator/prometheus` on each service (5 s interval for the three services).
+- **Grafana** (`http://localhost:3000`) shows `rate()` panels for sent, failed and DLQ counters plus totals. `rate()` values are per second.
+- **Kafka UI** shows the message count per topic, which makes the retry funnel visible.
+
+## Load test (chaos run)
+
+`EmailSender.injectChaos` throws a `PermanentNotificationException` for 5% of calls and a `TransientNotificationException` for another 15%, so about 20% of attempts fail on purpose. The numbers below come from a 10,000-event run with that failure injection, **not** from a real mail provider.
+
+| Metric | Value |
+|---|---|
+| Events published to `invoice-due` | 10,000 |
+| Messages in `retry-0` / `retry-1` / `retry-2` | 1,451 / 312 / 41 |
+| Messages in the DLT | 9 |
+| Throughput (Grafana `rate()`) | about 30 messages/s |
+| Total Sent / Total Failed (Grafana) | 10,000 / 1,813 (failed *attempts*, not lost messages) |
+
+Each retry stage shrinks the failing set by roughly the injected 15% transient rate. 9 of 10,000 events (0.09%) exhausted all four attempts and reached the DLT. Permanent errors (about 5% injected) skip the retry chain and are stored directly as `DLQ` rows, from where they can be replayed.
+
+## Quick start
 
 ### Prerequisites
 - Java 21+
 - Maven 3.8+
-- Docker & Docker Compose
+- Docker and Docker Compose
 
-### Run All Services
+### Run
 
 ```bash
-# Start all infrastructure (PostgreSQL, Redis, Kafka, Grafana)
+# Infrastructure (PostgreSQL, Redis, Kafka, Prometheus, Grafana, Kafka UI)
 docker-compose up -d
-
-# Wait for services to be healthy
 sleep 30
 
 # Build and run all services
@@ -25,391 +164,58 @@ sleep 30
 ./mvnw -pl notification-worker spring-boot:run &
 ```
 
-## Architecture
-
-![architecture.png](architecture.png)
-
-## Services
-
-### 1. Invoice Service (Port 8081)
-
-REST API for managing invoices with integrated Transactional Outbox Pattern.
-
-**Key Features:**
-- **REST Endpoints:**
-  - `GET /api/invoices/due?date=2026-09-28` - Get invoices due on a specific date
-  - `GET /actuator/health` - Service health
-  - `GET /actuator/prometheus` - Prometheus metrics
-
-- **Database Schema:**
-  - `invoices` table: Stores invoice data (id, user_id, amount, due_date, status)
-  - `outbox` table: Implements Transactional Outbox Pattern
-
-- **Transactional Outbox Pattern:**
-  - When invoice status changes to `NOTIFICATION_NEEDED`, an event is inserted into the `outbox` table in the same transaction
-  - `OutboxRelayService` polls the outbox every 5 seconds and publishes pending events to Kafka
-  - Once published successfully, events are marked as `PUBLISHED`
-  - Failed publishes are marked as `FAILED` for manual inspection
-
-- **Database Migrations:** Flyway manages schema versioning (V1: invoices, V2: outbox)
-
-**Configuration (application.yml):**
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/notification_db
-  kafka:
-    bootstrap-servers: localhost:9092
-  jpa:
-    hibernate:
-      ddl-auto: validate
-```
-
-### 2. Scheduler Worker (Port 8082)
-
-Scheduled worker for detecting invoices due in the near future.
-
-**Key Features:**
-- **Cron Schedule:** Runs daily at 02:00 UTC
-  - `@Scheduled(cron="0 0 2 * * *")`
-  - Queries invoice-service for invoices due in 3 days
-  - Uses ShedLock with Redis to prevent duplicate execution in clustered deployments
-
-- **ShedLock Configuration:**
-  ```java
-  @Scheduled(cron="0 0 2 * * *")
-  @SchedulerLock(name="dailyInvoiceCheck", lockAtLeastFor="PT5M")
-  public void checkDueInvoices() { ... }
-  ```
-
-- **Event Production:**
-  - Publishes `InvoiceDueEvent` to Kafka topic `invoice_due`
-  - Each event contains: eventId, invoiceId, userId, dueDate, channel, topic
-
-**Implementation (Phase 2 - Complete):**
-
-✅ **OpenFeign Client (InvoiceServiceClient)**
-```java
-@FeignClient(name = "invoice-service", url = "${invoice-service.url}")
-public interface InvoiceServiceClient {
-    @GetMapping("/api/invoices/due")
-    List<InvoiceDto> getDueInvoices(@RequestParam LocalDate date);
-}
-```
-- Configurable URL via `invoice-service.url` property
-- Maps invoice DTO responses
-- Integrated error handling with Spring retry
-
-✅ **ShedLock with Redis**
-```java
-@EnableSchedulerLock(defaultLockAtMostFor = "PT4M59S")
-public class SchedulerConfiguration {
-    @Bean
-    public LockProvider lockProvider(RedisConnectionFactory cf) {
-        return new RedisLockProvider(cf);
-    }
-}
-```
-- Distributed lock provider using Redis
-- Prevents duplicate execution in multi-instance deployments
-- Lock key stored in Redis with TTL
-- Configuration: `net.javacrumbs.shedlock:shedlock-provider-redis-spring:5.9.1`
-
-✅ **Scheduled Task with ShedLock**
-```java
-@Scheduled(cron = "0 0 2 * * *")
-@SchedulerLock(
-    name = "dailyInvoiceCheck",
-    lockAtMostFor = "4m59s",
-    lockAtLeastFor = "5m"
-)
-public void checkDueInvoices() { ... }
-```
-- Runs daily at 02:00 UTC
-- Lock held for at least 5 minutes (prevents quick re-execution)
-- Lock released after 5 minutes max
-- Queries invoices due in 3 days (today + 3 days)
-
-✅ **Kafka Producer Configuration**
-- Serializer: JsonSerializer for InvoiceDueEvent
-- Acks: `all` (ensures delivery)
-- Retries: 3
-- Batch settings for throughput optimization
-- Topic: `invoice_due` (auto-created by Kafka)
-
-✅ **Error Handling & Logging**
-- Graceful error handling with proper exception wrapping
-- Debug logging for troubleshooting
-- ShedLock debug logging for lock lifecycle
-- Metrics exported to Prometheus
-
-**Metrics Exposed:**
-- Via `/actuator/prometheus` on port 8082
-- JVM metrics, Spring Kafka producer metrics
-- Scheduled task execution count and duration
-
-### 3. Notification Worker (Port 8083)
-
-Consumes invoice due events and sends notifications across multiple channels.
-
-**Key Features:**
-- **Kafka Consumer:**
-   - Listens to `invoice_due` topic with consumer group `notification-group`
-   - Implements idempotency using Redis SET with NX flag
-   - Falls back to database unique constraint on (invoice_id, channel)
-
-- **Channel Strategy Pattern:**
-   ```java
-   interface NotificationSender {
-       boolean supports(String channel);
-       void send(InvoiceDueEvent event);
-   }
-   ```
-   Implementations: SmsSender, EmailSender, CallSender (mock/logging only for Phase 2)
-
-- **Retry & DLQ Strategy:**
-   - `@RetryableTopic` with exponential backoff: 2s, 8s, 32s (attempts: 1-4)
-   - Retry topics: `notifications.retry.sms`, `notifications.retry.email`, etc.
-   - Dead Letter Queue (DLQ) topic: `notifications.dlq`
-   - `@DltHandler` receives final failures for logging/alerting
-
-- **Idempotency:**
-   - Redis: `SET key=idemp:invoiceId:channel NX EX 86400`
-   - Database: `notification_deliveries` table with UNIQUE(invoice_id, channel)
-   - Prevents duplicate notifications even with retries
-
-- **Metrics:**
-   - Counter: `notifications.sent` (by channel, by status)
-   - Counter: `notifications.failed`
-   - Counter: `notifications.dlq`
-   - Counter: `notifications.duplicate`
-   - Expose at `GET /actuator/prometheus`
-
-**Future Implementation (Phase 3):**
-- Actual SMS/Email integrations (mock now)
-- Detailed tracing for troubleshooting
-- Channel-specific retry policies
-
-## Kafka Topics
-
-| Topic | Partitions | Purpose |
-|-------|-----------|---------|
-| `invoice_due` | 3 | Primary invoice due event stream |
-| `notifications.retry.sms` | 1 | SMS delivery retries |
-| `notifications.retry.email` | 1 | Email delivery retries |
-| `notifications.retry.call` | 1 | Call delivery retries |
-| `notifications.dlq` | 1 | Dead Letter Queue for all channels |
-
-## Database Schema (PostgreSQL)
-
-### invoices
-```sql
-CREATE TABLE invoices (
-    id UUID PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
-    amount NUMERIC(19, 2) NOT NULL,
-    due_date DATE NOT NULL,
-    status VARCHAR(50) NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
-);
--- Indexes on: due_date, status
-```
-
-### outbox
-```sql
-CREATE TABLE outbox (
-    id UUID PRIMARY KEY,
-    aggregate_id VARCHAR(255) NOT NULL,
-    topic VARCHAR(255) NOT NULL,
-    payload TEXT NOT NULL,
-    status VARCHAR(50) NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    published_at TIMESTAMP
-);
--- Indexes on: status, created_at
-```
-
-### notification_deliveries (Phase 2)
-```sql
-CREATE TABLE notification_deliveries (
-    id UUID PRIMARY KEY,
-    invoice_id VARCHAR(255) NOT NULL,
-    channel VARCHAR(50) NOT NULL,
-    status VARCHAR(50) NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    UNIQUE(invoice_id, channel)
-);
-```
-
-## Tech Stack
-
-| Component | Version | Purpose |
-|-----------|---------|---------|
-| Java | 21 | Language |
-| Spring Boot | 3.5.0 | Framework |
-| Spring Data JPA | 3.5.0 | Database ORM |
-| Spring Kafka | 3.5.0 | Event streaming |
-| Spring Data Redis | 3.5.0 | Distributed locks & caching |
-| PostgreSQL | 16 | Primary database |
-| Redis | 7 | Locks & caching |
-| Kafka | 3.7 (KRaft) | Event broker |
-| ShedLock | Latest | Distributed scheduling |
-| Flyway | 9.x | Database migrations |
-| MapStruct | 1.5.5 | DTO mapping |
-| Lombok | 1.18.30 | Boilerplate reduction |
-| Micrometer | 1.12+ | Metrics & observability |
-| OpenTelemetry | Latest | Distributed tracing |
-| Testcontainers | 1.19.8 | Integration testing |
-
-## Running Tests
+### Try it
 
 ```bash
-# Unit tests
-./mvnw test
+# Trigger the due check manually (use a date that matches your seed data)
+curl -X POST "http://localhost:8081/api/invoices/due-check?date=2026-10-08"
 
-# Integration tests (with Testcontainers)
-./mvnw verify
+# Check an invoice status
+curl http://localhost:8081/api/invoices/<invoice-id>/status
 
-# Specific module
-./mvnw -pl invoice-service test
+# Move FAILED outbox rows back to PENDING
+curl -X POST http://localhost:8081/api/admin/outbox/failed/reprocess
+
+# Replay DLQ rows into retry-0
+curl -X POST http://localhost:8083/api/admin/notifications/dlq/reprocess
 ```
 
-## Monitoring & Observability
+Health and metrics: `http://localhost:808x/actuator/health` and `/actuator/prometheus` for each service.
 
-### Health Checks
-```bash
-curl http://localhost:8081/actuator/health
-curl http://localhost:8082/actuator/health
-curl http://localhost:8083/actuator/health
-```
+## Tech stack
 
-### Prometheus Metrics
-```bash
-curl http://localhost:8081/actuator/prometheus
-```
+| Component | Purpose |
+|---|---|
+| Java 21, Spring Boot 3.5 | Language and framework |
+| Spring Data JPA, PostgreSQL 16 | Persistence (`invoices`, `outbox`, `notification_deliveries`) |
+| Spring Kafka, Kafka 3.7 (KRaft) | Events, `@RetryableTopic`, DLT |
+| Redis 7 | ShedLock locks and idempotency keys |
+| ShedLock (Redis provider) | Distributed scheduling lock |
+| Spring Cloud OpenFeign | Service-to-service HTTP calls |
+| Micrometer, Prometheus, Grafana | Metrics and dashboards |
+| Kafka UI | Topic inspection |
+| Lombok, Maven | Build and boilerplate |
 
-### Grafana Dashboards
-Access at `http://localhost:3000`
-- User: admin
-- Password: admin
+## Known limitations
 
-**Dashboard:** Import official Spring Boot dashboards for:
-- JVM metrics
-- Kafka consumer lag
-- HTTP request latency
-- Exception rates
+- **Mock senders, fixed recipient model:** events carry only `userId`; nothing resolves an email address or phone number yet, and the channel is always `EMAIL`.
+- **Chaos code in `EmailSender`:** failure injection is hard-coded. Remove it or guard it with a Spring profile before using a real provider.
+- **At-least-once delivery:** the outbox relay and Kafka can deliver an event more than once, and a crash between a successful send and the idempotency write can send a notification twice. Idempotency makes duplicates rare, not impossible.
+- **Single relay instance:** `OutboxRelayService` is designed to run as one instance. Several instances may publish the same row; consumers stay correct because of idempotency.
+- **No replay limit:** `DLQ` replay has no counter, so a permanently failing event can return to `DLQ` repeatedly.
+- **No authentication** on `/api/admin/**` and `/api/invoices/due-check`. Keep them on an internal network.
+- **No outbox cleanup:** `PUBLISHED` rows are never deleted.
+- **Local Kafka setup:** one broker, replication factor 1, one partition per topic.
 
-## Troubleshooting
+## Roadmap
 
-### Kafka Connection Issues
-```bash
-# Check Kafka broker health
-docker exec notification-kafka kafka-broker-api-versions --bootstrap-server localhost:9092
-
-# List topics
-docker exec notification-kafka kafka-topics --list --bootstrap-server localhost:9092
-
-# Monitor consumer lag
-docker exec notification-kafka kafka-consumer-groups --group notification-group \
-  --bootstrap-server localhost:9092 --describe
-```
-
-### Database Issues
-```bash
-# Check PostgreSQL
-docker exec notification-postgres psql -U postgres -c "SELECT * FROM invoices;"
-
-# View Outbox status
-docker exec notification-postgres psql -U postgres -c "SELECT * FROM outbox;"
-```
-
-### Redis Issues
-```bash
-# Check Redis
-docker exec notification-redis redis-cli ping
-
-# View keys
-docker exec notification-redis redis-cli KEYS "*"
-```
-
-## Development Workflow
-
-### Code Style
-- Constructor injection only (no field injection)
-- Lombok for boilerplate (@Data, @RequiredArgsConstructor, etc.)
-- MapStruct for DTO conversions
-- Comprehensive logging with SLF4J
-
-### Testing Strategy
-- Unit tests for business logic
-- Integration tests using Testcontainers for databases/brokers
-- Contract tests for service interactions
-
-### Building & Packaging
-```bash
-# Build all modules
-./mvnw clean package
-
-# Build specific module
-./mvnw -pl invoice-service clean package
-
-# Skip tests
-./mvnw clean package -DskipTests
-
-# Build Docker images (future)
-./mvnw spring-boot:build-image
-```
-
-## Future Enhancements (Phase 2+)
-
-1. **Scheduler Worker:**
-   - Implement OpenFeign client
-   - Add ShedLock with JDBC backend
-   - Comprehensive error handling
-
-2. **Notification Worker:**
-   - Real SMS/Email integrations (Twilio, SendGrid)
-   - Template engine for dynamic content
-   - Advanced retry policies per channel
-   - Delivery tracking and analytics
-
-3. **API Gateway:**
-   - Spring Cloud Gateway for routing
-   - Rate limiting & circuit breaking
-   - Request/response logging
-
-4. **Configuration Management:**
-   - Spring Cloud Config Server
-   - Dynamic property refresh
-   - Environment-specific profiles
-
-5. **Resilience:**
-   - Resilience4J for circuit breaking
-   - Bulkhead pattern for resource isolation
-   - Distributed tracing with OpenTelemetry
-
-6. **Testing:**
-   - Chaos engineering tests
-   - Performance benchmarking
-   - Load testing with K6/Gatling
-
-## Contributing
-
-1. Clone the repository
-2. Create feature branch: `git checkout -b feature/my-feature`
-3. Commit with conventional commits: `git commit -m "feat: add new feature"`
-4. Push to branch: `git push origin feature/my-feature`
-5. Create Pull Request
+- Real SMS and email providers, with recipient lookup and per-channel retry policies
+- Log correlation with `eventId` and `invoiceId` in MDC
+- Alerts for DLT growth and consumer lag
+- Authentication for admin endpoints
+- Outbox retention job and a safe multi-instance relay
+- Replay limit and a separate status for non-replayable permanent failures
 
 ## License
 
-MIT License - see LICENSE file for details
-
-## Support
-
-For issues and questions:
-- Check existing GitHub Issues
-- Review architecture documentation
-- Consult troubleshooting guide above
-- Contact: support@notification-service.dev
+MIT
