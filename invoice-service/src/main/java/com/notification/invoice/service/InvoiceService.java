@@ -30,6 +30,15 @@ public class InvoiceService {
 
     private static final int BATCH_SIZE = 1000;
 
+    /**
+     * Schedules due notifications for unpaid invoices due on or before the given date
+     * that have not been scheduled yet. For each invoice an outbox event is written
+     * and notificationScheduled is set to true. Invoices are processed in batches,
+     * each in its own transaction, until no eligible invoice is left.
+     *
+     * @param date upper bound (inclusive) for the invoice due date
+     * @return total number of invoices scheduled for notification
+     */
     public int triggerDueCheck(LocalDate date) {
         int total = 0;
         while (true) {
