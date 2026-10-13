@@ -1,6 +1,5 @@
 package com.notification.invoice.controller;
 
-import com.notification.enums.InvoiceStatus;
 import com.notification.invoice.service.InvoiceService;
 import com.notification.records.InvoiceStatusResponse;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +33,8 @@ public class InvoiceController {
 
     @GetMapping("/{id}/status")
     public ResponseEntity<InvoiceStatusResponse> getStatus(@PathVariable UUID id) {
-        InvoiceStatus status = invoiceService.getStatus(id);
-        return ResponseEntity.ok(new InvoiceStatusResponse(id, status));
+        return invoiceService.findStatus(id)
+                .map(status -> ResponseEntity.ok(new InvoiceStatusResponse(id, status)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

@@ -7,8 +7,4 @@ public class PermanentNotificationException extends NotificationSendException {
     public PermanentNotificationException(String message, Throwable cause) {
         super(message, cause);
     }
-    @Override
-    public boolean isTransient() {
-        return false;
-    }
 }

@@ -7,7 +7,5 @@ public record InvoiceDueEvent(
     UUID eventId,
     UUID invoiceId,
     String userId,
-    LocalDate dueDate,
-    String channel,
-    String topic
+    LocalDate dueDate
 ) {}

@@ -1,15 +1,14 @@
 package com.notification.invoice.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.notification.enums.Channel;
 import com.notification.events.InvoiceDueEvent;
 import com.notification.enums.InvoiceStatus;
 import com.notification.events.InvoiceDueTopics;
+import com.notification.invoice.model.Invoice;
 import com.notification.invoice.model.OutboxEvent;
 import com.notification.invoice.model.OutboxEventStatus;
 import com.notification.invoice.repository.InvoiceRepository;
 import com.notification.invoice.repository.OutboxEventRepository;
-import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -65,18 +65,15 @@ public class InvoiceService {
                         eventId,
                         inv.getId(),
                         inv.getUserId(),
-                        inv.getDueDate(),
-                        Channel.EMAIL.name(),
-                        InvoiceDueTopics.MAIN
+                        inv.getDueDate()
                 );
 
                 outboxEvents.add(OutboxEvent.builder()
                         .aggregateId(inv.getId().toString())
                         .eventId(eventId)
-                        .topic(event.topic())
+                        .topic(InvoiceDueTopics.MAIN)
                         .payload(objectMapper.writeValueAsString(event))
                         .status(OutboxEventStatus.PENDING)
-                        .retryCount(0)
                         .build());
 
                 inv.setNotificationScheduled(true);
@@ -92,9 +89,7 @@ public class InvoiceService {
     }
 
     @Transactional(readOnly = true)
-    public InvoiceStatus getStatus(UUID invoiceId) {
-        return invoiceRepository.findById(invoiceId).
-                map(inv -> InvoiceStatus.valueOf(String.valueOf(inv.getStatus()))).
-                orElseThrow(() -> new EntityNotFoundException("Invoice not found: " + invoiceId));
+    public Optional<InvoiceStatus> findStatus(UUID invoiceId) {
+        return invoiceRepository.findById(invoiceId).map(Invoice::getStatus);
     }
 }

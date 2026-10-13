@@ -16,7 +16,9 @@ public class NotificationMetricsService {
     private static final String METRIC_SENT = "notifications.sent";
     private static final String METRIC_FAILED = "notifications.failed";
     private static final String METRIC_DLQ = "notifications.dlq";
+    private static final String METRIC_REJECTED = "notifications.rejected";
     private static final String METRIC_DUPLICATE = "notifications.duplicate";
+    private static final String METRIC_SKIPPED = "notifications.skipped";
 
     public void recordNotificationSent(String channel) {
         Counter.builder(METRIC_SENT)
@@ -43,6 +45,24 @@ public class NotificationMetricsService {
                 .register(meterRegistry)
                 .increment();
         log.debug("Metrics: Incremented notifications.dlq for channel: {}", channel);
+    }
+
+    public void recordNotificationRejected(String channel) {
+        Counter.builder(METRIC_REJECTED)
+                .description("Total notifications rejected because of a permanent failure")
+                .tag("channel", channel)
+                .register(meterRegistry)
+                .increment();
+        log.debug("Metrics: Incremented notifications.rejected for channel: {}", channel);
+    }
+
+    public void recordNotificationSkipped(String channel) {
+        Counter.builder(METRIC_SKIPPED)
+                .description("Total notifications skipped because the invoice was already paid or cancelled")
+                .tag("channel", channel)
+                .register(meterRegistry)
+                .increment();
+        log.debug("Metrics: Incremented notifications.skipped for channel: {}", channel);
     }
 
     public void recordNotificationDuplicate(String channel) {

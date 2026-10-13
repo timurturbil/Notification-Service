@@ -26,11 +26,11 @@ public class EmailSender implements NotificationSender {
     }
 
     private void injectChaos(InvoiceDueEvent event) {
-        double r = ThreadLocalRandom.current().nextDouble();
-        if (r < 0.05) {
-            throw new PermanentNotificationException("CHAOS_PERMANENT - for DLQ test " + event.invoiceId());
+        // tied to the event, not random: about 5% of events fail permanently on every attempt
+        if (Math.floorMod(event.eventId().hashCode(), 100) < 5) {
+            throw new PermanentNotificationException("CHAOS_PERMANENT - always fails for this event " + event.invoiceId());
         }
-        if (r < 0.20) {
+        if (ThreadLocalRandom.current().nextDouble() < 0.15) {
             throw new TransientNotificationException("CHAOS_TRANSIENT - for retry test " + event.invoiceId());
         }
         if (ThreadLocalRandom.current().nextDouble() < 0.02) {

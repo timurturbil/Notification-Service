@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX idx_notification_deliveries_event_id ON notification_deliveries(event_id);

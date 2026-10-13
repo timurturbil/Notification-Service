@@ -1,1 +1,0 @@
-ALTER TABLE notification_deliveries ADD COLUMN event_payload TEXT;
